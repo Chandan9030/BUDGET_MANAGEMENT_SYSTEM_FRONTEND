@@ -88,7 +88,7 @@ export function BudgetTable() {
     setEditingCell({ sectionIndex, itemIndex, columnId, originalValue: currentValue });
     setTempValue(String(currentValue));
     setValidationError("");
-  }, [editingCell, data]);
+  }, [editingCell, data, handleBlur]);
 
   const stopEditing = useCallback(() => {
     setEditingCell(null);
