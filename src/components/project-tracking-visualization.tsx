@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { BarChart, LineChart, Package } from "lucide-react"
 import { Button } from "../components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
@@ -9,7 +9,6 @@ import { Checkbox } from "../components/ui/checkbox"
 import { Label } from "../components/ui/label"
 import type { ProjectTrackingItem } from "../types/project-tracking"
 import { formatCurrency } from "../lib/format-utils"
-import Chart from "chart.js/auto"
 
 interface ProjectTrackingVisualizationProps {
   data: ProjectTrackingItem[]
@@ -20,24 +19,25 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
   const [viewBy, setViewBy] = useState<"profit" | "cost" | "timeline">("profit")
   const [analysisType, setAnalysisType] = useState<"profitAmount" | "profitPercent" | "efficiency">("profitAmount")
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
-  const chartRef = useRef<HTMLCanvasElement>(null)
-  const chartInstance = useRef<Chart | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  console.log("ProjectTrackingVisualization data:", data)
 
   // Initialize with all statuses selected
   useEffect(() => {
     if (data.length > 0 && selectedStatuses.length === 0) {
-      const statuses = Array.from(new Set(data.map(item => item.docStatus || "Unknown")))
+      const statuses = Array.from(new Set(data.map((item) => item.docStatus || "Unknown")))
       setSelectedStatuses(statuses)
     }
   }, [data, selectedStatuses.length])
 
   // Filter data based on selected statuses
-  const filteredData = data.filter(item => selectedStatuses.includes(item.docStatus || "Unknown"))
+  const filteredData = data.filter((item) => selectedStatuses.includes(item.docStatus || "Unknown"))
 
   const toggleStatus = (status: string) => {
-    setSelectedStatuses(prev => {
+    setSelectedStatuses((prev) => {
       if (prev.includes(status)) {
-        return prev.filter(s => s !== status)
+        return prev.filter((s) => s !== status)
       } else {
         return [...prev, status]
       }
@@ -45,7 +45,7 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
   }
 
   const selectAllStatuses = () => {
-    const statuses = Array.from(new Set(data.map(item => item.docStatus || "Unknown")))
+    const statuses = Array.from(new Set(data.map((item) => item.docStatus || "Unknown")))
     setSelectedStatuses(statuses)
   }
 
@@ -70,39 +70,17 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
     projectCost: filteredData.reduce((sum, item) => sum + (item.projectCost || 0), 0),
     collectAmount: filteredData.reduce((sum, item) => sum + (item.collectAmount || 0), 0),
     profitForProject: filteredData.reduce((sum, item) => sum + (item.profitForProject || 0), 0),
-    daysInvolved: filteredData.reduce((sum, item) => sum + (item.daysInvolved || 0), 0)
-  };
+    daysInvolved: filteredData.reduce((sum, item) => sum + (item.daysInvolved || 0), 0),
+  }
 
-  // Chart rendering
-  useEffect(() => {
-    if (!chartRef.current) return
-
-    // Destroy previous chart if it exists
-    if (chartInstance.current) {
-      chartInstance.current.destroy()
-    }
-
-    const ctx = chartRef.current.getContext("2d")
-    if (!ctx) return
-
-    let chartData: { 
-      labels: string[], 
-      datasets: { 
-        label: string, 
-        data: number[], 
-        backgroundColor: string | string[], 
-        borderColor: string | string[],
-        borderWidth: number 
-      }[] 
-    }
-
-    // Sort data based on analysis type
+  // Prepare chart data
+  const chartData = useMemo(() => {
     const sortedData = [...filteredData].sort((a, b) => {
       if (analysisType === "profitAmount") {
         return (b.profitForProject || 0) - (a.profitForProject || 0)
       } else if (analysisType === "profitPercent") {
-        const percentA = a.projectCost ? (a.profitForProject || 0) / a.projectCost * 100 : 0
-        const percentB = b.projectCost ? (b.profitForProject || 0) / b.projectCost * 100 : 0
+        const percentA = a.projectCost ? ((a.profitForProject || 0) / a.projectCost) * 100 : 0
+        const percentB = b.projectCost ? ((b.profitForProject || 0) / b.projectCost) * 100 : 0
         return percentB - percentA
       } else {
         const efficiencyA = a.daysInvolved ? (a.profitForProject || 0) / a.daysInvolved : 0
@@ -111,129 +89,140 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
       }
     })
 
-    // Take top 10 items for better visualization
-    const topItems = sortedData.slice(0, 10)
-    const labels = topItems.map(item => item.projectWork || "Unnamed Project")
+    return sortedData.slice(0, 10).map((item) => ({
+      name: item.projectWork || "Unnamed Project",
+      projectCost: item.projectCost || 0,
+      collectAmount: item.collectAmount || 0,
+      profit: item.profitForProject || 0,
+      profitPercent: item.projectCost ? ((item.profitForProject || 0) / item.projectCost) * 100 : 0,
+      efficiency: item.daysInvolved ? (item.profitForProject || 0) / item.daysInvolved : 0,
+      daysInvolved: item.daysInvolved || 0,
+    }))
+  }, [filteredData, analysisType])
+
+  // Draw chart using Canvas API
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || chartData.length === 0) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Set canvas size
+    const rect = canvas.getBoundingClientRect()
+    canvas.width = rect.width * window.devicePixelRatio
+    canvas.height = rect.height * window.devicePixelRatio
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+
+    // Clear canvas
+    ctx.clearRect(0, 0, rect.width, rect.height)
+
+    // Chart dimensions
+    const padding = 60
+    const chartWidth = rect.width - padding * 2
+    const chartHeight = rect.height - padding * 2
+
+    // Get values based on view type
+    let values: number[] = []
+    const labels: string[] = chartData.map((item) => item.name)
+    let colors: string[] = []
 
     if (viewBy === "profit") {
-      let values
       if (analysisType === "profitAmount") {
-        values = topItems.map(item => item.profitForProject || 0)
+        values = chartData.map((item) => item.profit)
+        colors = values.map((v) => (v >= 0 ? "#22c55e" : "#ef4444"))
       } else if (analysisType === "profitPercent") {
-        values = topItems.map(item => 
-          item.projectCost ? (item.profitForProject || 0) / item.projectCost * 100 : 0
-        )
+        values = chartData.map((item) => item.profitPercent)
+        colors = values.map((v) => (v >= 0 ? "#3b82f6" : "#ef4444"))
       } else {
-        values = topItems.map(item => 
-          item.daysInvolved ? (item.profitForProject || 0) / item.daysInvolved : 0
-        )
-      }
-
-      chartData = {
-        labels,
-        datasets: [
-          {
-            label: analysisType === "profitAmount" ? "Profit Amount" :
-                   analysisType === "profitPercent" ? "Profit Percentage" : "Profit per Day",
-            data: values,
-            backgroundColor: values.map(value => value >= 0 ? "rgba(34, 197, 94, 0.7)" : "rgba(239, 68, 68, 0.7)"),
-            borderColor: values.map(value => value >= 0 ? "rgba(34, 197, 94, 1)" : "rgba(239, 68, 68, 1)"),
-            borderWidth: 1
-          }
-        ]
+        values = chartData.map((item) => item.efficiency)
+        colors = values.map((v) => (v >= 0 ? "#8b5cf6" : "#ef4444"))
       }
     } else if (viewBy === "cost") {
-      chartData = {
-        labels,
-        datasets: [
-          {
-            label: "Project Cost",
-            data: topItems.map(item => item.projectCost || 0),
-            backgroundColor: "rgba(59, 130, 246, 0.7)",
-            borderColor: "rgba(59, 130, 246, 1)",
-            borderWidth: 1
-          },
-          {
-            label: "Collection Amount",
-            data: topItems.map(item => item.collectAmount || 0),
-            backgroundColor: "rgba(16, 185, 129, 0.7)",
-            borderColor: "rgba(16, 185, 129, 1)",
-            borderWidth: 1
-          }
-        ]
-      }
+      values = chartData.map((item) => item.projectCost)
+      colors = new Array(values.length).fill("#3b82f6")
     } else {
-      // Timeline view - calculate days involved
-      chartData = {
-        labels,
-        datasets: [
-          {
-            label: "Days Involved",
-            data: topItems.map(item => item.daysInvolved || 0),
-            backgroundColor: "rgba(139, 92, 246, 0.7)",
-            borderColor: "rgba(139, 92, 246, 1)",
-            borderWidth: 1
-          }
-        ]
-      }
+      values = chartData.map((item) => item.daysInvolved)
+      colors = new Array(values.length).fill("#8b5cf6")
     }
 
-    // Create chart
-    chartInstance.current = new Chart(ctx, {
-      type: chartType,
-      data: chartData,
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: "top",
-            labels: {
-              font: {
-                size: 12
-              }
-            }
-          },
-          tooltip: {
-            callbacks: {
-              label: (context) => {
-                const label = context.dataset.label || "";
-                const value = context.raw as number;
-                
-                if (viewBy === "profit" && analysisType === "profitPercent") {
-                  return `${label}: ${value.toFixed(1)}%`;
-                } else if (viewBy === "profit" && analysisType === "efficiency") {
-                  return `${label}: ${formatCurrency(value, false)}/day`;
-                } else {
-                  return `${label}: ${formatCurrency(value, false)}`;
-                }
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              callback: (value) => {
-                if (viewBy === "profit" && analysisType === "profitPercent") {
-                  return `${value}%`;
-                } else {
-                  return formatCurrency(value as number, false);
-                }
-              }
-            }
-          }
-        }
-      }
-    });
+    if (values.length === 0) return
 
-    return () => {
-      if (chartInstance.current) {
-        chartInstance.current.destroy();
-      }
-    };
-  }, [filteredData, chartType, viewBy, analysisType]);
+    const maxValue = Math.max(...values)
+    const minValue = Math.min(...values, 0)
+    const valueRange = maxValue - minValue || 1
+
+    // Draw axes
+    ctx.strokeStyle = "#e5e7eb"
+    ctx.lineWidth = 1
+
+    // Y-axis
+    ctx.beginPath()
+    ctx.moveTo(padding, padding)
+    ctx.lineTo(padding, padding + chartHeight)
+    ctx.stroke()
+
+    // X-axis
+    ctx.beginPath()
+    ctx.moveTo(padding, padding + chartHeight)
+    ctx.lineTo(padding + chartWidth, padding + chartHeight)
+    ctx.stroke()
+
+    // Draw chart based on type
+    if (chartType === "bar") {
+      const barWidth = (chartWidth / values.length) * 0.8
+      const barSpacing = (chartWidth / values.length) * 0.2
+
+      values.forEach((value, index) => {
+        const barHeight = (Math.abs(value - minValue) / valueRange) * chartHeight
+        const x = padding + index * (barWidth + barSpacing) + barSpacing / 2
+        const y = value >= 0 ? padding + chartHeight - barHeight : padding + chartHeight
+
+        ctx.fillStyle = colors[index]
+        ctx.fillRect(x, y, barWidth, barHeight)
+
+        // Draw value labels
+        ctx.fillStyle = "#374151"
+        ctx.font = "12px sans-serif"
+        ctx.textAlign = "center"
+        const labelY = value >= 0 ? y - 5 : y + barHeight + 15
+        ctx.fillText(formatCurrency(value, false), x + barWidth / 2, labelY)
+      })
+    } else {
+      // Line chart
+      ctx.strokeStyle = colors[0] || "#3b82f6"
+      ctx.lineWidth = 2
+      ctx.beginPath()
+
+      values.forEach((value, index) => {
+        const x = padding + (index / (values.length - 1)) * chartWidth
+        const y = padding + chartHeight - ((value - minValue) / valueRange) * chartHeight
+
+        if (index === 0) {
+          ctx.moveTo(x, y)
+        } else {
+          ctx.lineTo(x, y)
+        }
+
+        // Draw points
+        ctx.fillStyle = colors[0] || "#3b82f6"
+        ctx.beginPath()
+        ctx.arc(x, y, 4, 0, 2 * Math.PI)
+        ctx.fill()
+      })
+      ctx.stroke()
+    }
+
+    // Draw labels
+    ctx.fillStyle = "#374151"
+    ctx.font = "10px sans-serif"
+    ctx.textAlign = "center"
+    labels.forEach((label, index) => {
+      const x = padding + (index / Math.max(labels.length - 1, 1)) * chartWidth
+      const truncatedLabel = label.length > 10 ? label.substring(0, 10) + "..." : label
+      ctx.fillText(truncatedLabel, x, padding + chartHeight + 20)
+    })
+  }, [chartData, chartType, viewBy, analysisType])
 
   return (
     <div className="space-y-6">
@@ -273,8 +262,8 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
           </Select>
 
           {viewBy === "profit" && (
-            <Select 
-              value={analysisType} 
+            <Select
+              value={analysisType}
               onValueChange={(value: "profitAmount" | "profitPercent" | "efficiency") => setAnalysisType(value)}
             >
               <SelectTrigger className="w-32 md:w-40 bg-orange-600 text-white hover:bg-orange-700">
@@ -296,10 +285,20 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
             <CardTitle className="text-lg font-medium flex items-center justify-between">
               <span>Filter by Status</span>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={selectAllStatuses} className="text-xs py-1 h-8 bg-green-200">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={selectAllStatuses}
+                  className="text-xs py-1 h-8 bg-green-200"
+                >
                   All
                 </Button>
-                <Button size="sm" variant="outline" onClick={deselectAllStatuses} className="text-xs py-1 h-8 bg-red-200">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={deselectAllStatuses}
+                  className="text-xs py-1 h-8 bg-red-200"
+                >
                   None
                 </Button>
               </div>
@@ -307,10 +306,10 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
           </CardHeader>
           <CardContent className="max-h-60 overflow-y-auto">
             <div className="space-y-3">
-              {Array.from(new Set(data.map(item => item.docStatus || "Unknown"))).map(status => (
+              {Array.from(new Set(data.map((item) => item.docStatus || "Unknown"))).map((status) => (
                 <div key={status} className="flex items-center space-x-2">
-                  <Checkbox 
-                    id={`status-${status}`} 
+                  <Checkbox
+                    id={`status-${status}`}
                     checked={selectedStatuses.includes(status)}
                     onCheckedChange={() => toggleStatus(status)}
                   />
@@ -325,7 +324,7 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
 
         <div className="md:col-span-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
+            <Card className="bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-gray-500">Project Cost</CardTitle>
               </CardHeader>
@@ -335,7 +334,7 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-gray-500">Collection Amount</CardTitle>
               </CardHeader>
@@ -345,54 +344,57 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-gray-500">Profit</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{formatCurrency(filteredTotals.profitForProject, false)}</div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {filteredTotals.projectCost > 0 
-                    ? `${((filteredTotals.profitForProject / filteredTotals.projectCost) * 100).toFixed(1)}% margin` 
-                    : '0% margin'}
+                  {filteredTotals.projectCost > 0
+                    ? `${((filteredTotals.profitForProject / filteredTotals.projectCost) * 100).toFixed(1)}% margin`
+                    : "0% margin"}
                 </p>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-gray-500">Total Days</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{filteredTotals.daysInvolved}</div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {filteredTotals.daysInvolved > 0 
-                    ? `${formatCurrency(filteredTotals.profitForProject / filteredTotals.daysInvolved, false)}/day` 
-                    : '0/day'}
+                  {filteredTotals.daysInvolved > 0
+                    ? `${formatCurrency(filteredTotals.profitForProject / filteredTotals.daysInvolved, false)}/day`
+                    : "0/day"}
                 </p>
               </CardContent>
             </Card>
           </div>
 
-          <Card className="mt-4">
+          <Card className="mt-4 bg-white shadow-sm">
             <CardHeader>
-              <CardTitle>
-                {viewBy === "profit" 
-                  ? analysisType === "profitAmount" 
-                    ? "Project Profit Analysis" 
-                    : analysisType === "profitPercent" 
-                      ? "Project Profit Percentage" 
+              <CardTitle className="text-lg font-semibold">
+                {viewBy === "profit"
+                  ? analysisType === "profitAmount"
+                    ? "Project Profit Analysis"
+                    : analysisType === "profitPercent"
+                      ? "Project Profit Percentage"
                       : "Project Profit Efficiency (per day)"
-                  : viewBy === "cost" 
-                    ? "Project Cost vs Collection" 
-                    : "Project Timeline Analysis"
-                }
+                  : viewBy === "cost"
+                    ? "Project Cost vs Collection"
+                    : "Project Timeline Analysis"}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-80 relative">
                 {filteredData.length > 0 ? (
-                  <canvas ref={chartRef}></canvas>
+                  <canvas
+                    ref={canvasRef}
+                    className="w-full h-full border border-gray-200 rounded-lg"
+                    style={{ width: "100%", height: "100%" }}
+                  />
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <p className="text-gray-500">Please select at least one status to display chart</p>
@@ -404,7 +406,7 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
         </div>
       </div>
 
-      <Card>
+      <Card className="bg-white shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-xl font-bold">Project Details</CardTitle>
           <div className="flex items-center text-sm text-gray-500">
@@ -430,13 +432,12 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
                 <tbody>
                   {filteredData
                     .sort((a, b) => {
-                      // Default sort by profit
-                      return (b.profitForProject || 0) - (a.profitForProject || 0);
+                      return (b.profitForProject || 0) - (a.profitForProject || 0)
                     })
                     .map((item) => {
-                      const profitPercentage = item.projectCost 
-                        ? ((item.profitForProject || 0) / item.projectCost) * 100 
-                        : 0;
+                      const profitPercentage = item.projectCost
+                        ? ((item.profitForProject || 0) / item.projectCost) * 100
+                        : 0
 
                       return (
                         <tr key={item.id} className="hover:bg-gray-50">
@@ -444,7 +445,9 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
                           <td className="border border-gray-200 px-4 py-2">{item.devName || "N/A"}</td>
                           <td className="border border-gray-200 px-4 py-2 text-center">
                             <div className="flex flex-col">
-                              <span className="text-xs">{formatDate(item.startDate)} - {formatDate(item.endedDate)}</span>
+                              <span className="text-xs">
+                                {formatDate(item.startDate)} - {formatDate(item.endedDate)}
+                              </span>
                               <span className="text-xs text-gray-500">{item.daysInvolved || 0} days</span>
                             </div>
                           </td>
@@ -459,18 +462,21 @@ export function ProjectTrackingVisualization({ data }: ProjectTrackingVisualizat
                               <span className={item.profitForProject >= 0 ? "text-green-600" : "text-red-600"}>
                                 {formatCurrency(item.profitForProject || 0, false)}
                               </span>
-                              <span className="text-xs text-gray-500">
-                                {profitPercentage.toFixed(1)}%
-                              </span>
+                              <span className="text-xs text-gray-500">{profitPercentage.toFixed(1)}%</span>
                             </div>
                           </td>
                           <td className="border border-gray-200 px-4 py-2 text-center">
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              item.docStatus === "Completed" ? "bg-green-100 text-green-800" :
-                              item.docStatus === "In Progress" ? "bg-blue-100 text-blue-800" :
-                              item.docStatus === "On Hold" ? "bg-yellow-100 text-yellow-800" :
-                              "bg-gray-100 text-gray-800"
-                            }`}>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${
+                                item.docStatus === "Completed"
+                                  ? "bg-green-100 text-green-800"
+                                  : item.docStatus === "In Progress"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : item.docStatus === "On Hold"
+                                      ? "bg-yellow-100 text-yellow-800"
+                                      : "bg-gray-100 text-gray-800"
+                              }`}
+                            >
                               {item.docStatus || "Unknown"}
                             </span>
                           </td>

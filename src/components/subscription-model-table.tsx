@@ -1,16 +1,24 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
-import { Save, Trash2, Plus, AlertCircle } from "lucide-react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { Save, Trash2, Plus, AlertCircle, Download } from "lucide-react"
 import { cn } from "../lib/utils"
 import { formatCurrency } from "../lib/format-utils"
 import { SubscriptionModelItem, useSubscriptionModel } from "../hooks/use-subscription-model-data"
+import * as XLSX from "xlsx"
 
 // Types for better type safety
 interface EditingCell {
   rowIndex: number;
   columnId: string;
   originalValue: string | number;
+}
+
+interface ColumnConfig {
+  id: string;
+  label: string;
+  type: 'text' | 'number';
+  align?: 'left' | 'right';
 }
 
 export function SubscriptionModelTable() {
@@ -41,6 +49,17 @@ export function SubscriptionModelTable() {
   const [removingRows, setRemovingRows] = useState<Set<number>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Column configuration
+  const columns: ColumnConfig[] = useMemo(() => [
+    { id: 'solpType', label: 'Type', type: 'text', align: 'left' },
+    { id: 'revenueSource', label: 'Revenue Source', type: 'text', align: 'left' },
+    { id: 'subscriptionsAvailed', label: 'Subscriptions Availed', type: 'number', align: 'right' },
+    { id: 'projectedMonthlyRevenue', label: 'Monthly Revenue (INR)', type: 'number', align: 'right' },
+    { id: 'projectedAnnualRevenue', label: 'Annual Revenue (INR)', type: 'number', align: 'right' },
+    { id: 'subscribed', label: 'Subscribed', type: 'number', align: 'right' },
+    { id: 'profit', label: 'Profit', type: 'number', align: 'right' },
+  ], [])
+
   // Generate a temporary ID for items that don't have one
   const generateTempId = (index: number) => `temp_${index}_${Date.now()}`
 
@@ -70,6 +89,51 @@ export function SubscriptionModelTable() {
     const num = parseFloat(value);
     return !isNaN(num) && num >= 0;
   }, []);
+
+  // Excel download handler
+  const handleDownloadExcel = useCallback(() => {
+    // Prepare data for Excel, including SL No.
+    const exportData = modelData.map((item, index) => {
+      const row: Record<string, string | number> = {
+        'SL No.': index + 1,
+      };
+      columns.forEach((column) => {
+        const value = item[column.id as keyof SubscriptionModelItem];
+        row[column.label] = column.type === 'number' ? Number(value) || 0 : String(value || '');
+      });
+      return row;
+    });
+
+    // Add totals row
+    const totalsRow: Record<string, string | number> = {
+      'SL No.': 'Total',
+      'Type': '',
+      'Revenue Source': '',
+      'Subscriptions Availed': totals.subscriptionsAvailed,
+      'Monthly Revenue (INR)': totals.projectedMonthlyRevenue,
+      'Annual Revenue (INR)': totals.projectedAnnualRevenue,
+      'Subscribed': totals.subscribed,
+      'Profit': totals.profit,
+    };
+    exportData.push(totalsRow);
+
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // Set column widths
+    const colWidths = [
+      { wch: 10 }, // SL No.
+      ...columns.map(() => ({ wch: 15 })), // Other columns
+    ];
+    worksheet['!cols'] = colWidths;
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Subscription Model');
+
+    // Download file
+    XLSX.writeFile(workbook, 'subscription-model.xlsx');
+  }, [modelData, totals, columns]);
 
   const startEditing = useCallback((rowIndex: number, columnId: string) => {
     if (
@@ -257,7 +321,7 @@ export function SubscriptionModelTable() {
       return (
         <div
           className={cn(
-            "min-h-[2rem] p-2 rounded-lg transition-all duration-200 relative",
+            "min-h-[2rem] p-2 rounded-lg transition-all duration-200",
             "cursor-pointer hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50",
             "hover:shadow-md hover:scale-105 border border-transparent hover:border-blue-400",
             textAlign === "right" && "text-right",
@@ -362,6 +426,14 @@ export function SubscriptionModelTable() {
             )} />
             {isAddingRow ? "Adding..." : "Add Plan"}
           </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
+          >
+            <Download className="h-4 w-4 transition-transform duration-200" />
+            Download Excel
+          </button>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -392,26 +464,20 @@ export function SubscriptionModelTable() {
           <thead className="sticky top-0 bg-gradient-to-r from-yellow-200 to-yellow-300 z-20 shadow-md">
             <tr>
               <th className="border border-gray-300 px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider sticky left-0 z-30 bg-gradient-to-r from-yellow-200 to-yellow-300 transition-colors duration-200 hover:bg-yellow-400">
-                Type
+                SL No.
               </th>
-              <th className="border border-gray-300 px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider sticky left-16 z-30 bg-gradient-to-r from-yellow-200 to-yellow-300 transition-colors duration-200 hover:bg-yellow-400">
-                Revenue Source
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Subscriptions Availed
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Monthly Revenue (INR)
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Annual Revenue (INR)
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Subscribed
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Profit
-              </th>
+              {columns.map((column, index) => (
+                <th
+                  key={column.id}
+                  className={cn(
+                    "border border-gray-300 px-4 py-3 text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400",
+                    column.align === 'right' ? 'text-right' : 'text-left'
+                  )}
+                  style={{ animationDelay: `${index * 50}ms` }}
+                >
+                  {column.label}
+                </th>
+              ))}
               <th className="border border-gray-300 px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider w-20 transition-colors duration-200 hover:bg-yellow-400">
                 Actions
               </th>
@@ -431,32 +497,26 @@ export function SubscriptionModelTable() {
                   ],
                   !removingRows.has(index) && [
                     index % 2 === 0 ? "bg-white" : "bg-gray-50",
-                  ],
-                  !item.id && "bg-orange-50"
+                    !item.id && "bg-orange-50",
+                  ]
                 )}
                 style={{ animationDelay: `${index * 100}ms` }}
               >
-                <td className="border border-gray-300 px-4 py-3 sticky left-0 z-10 bg-inherit">
-                  {renderEditableCell(item, index, "solpType", false, "left")}
+                <td className="border border-gray-300 px-4 py-3 text-center font-medium">
+                  {index + 1}
                 </td>
-                <td className="border border-gray-300 px-4 py-3 sticky left-16 z-10 bg-inherit">
-                  {renderEditableCell(item, index, "revenueSource", false, "left")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "subscriptionsAvailed", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "projectedMonthlyRevenue", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "projectedAnnualRevenue", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "subscribed", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "profit", true, "right")}
-                </td>
+                {columns.map(column => (
+                  <td
+                    key={column.id}
+                    className={cn(
+                      "border border-gray-300 px-4 py-3",
+                      column.align === 'right' && 'text-right',
+                      column.align === 'left' && 'sticky left-0 z-10 bg-inherit'
+                    )}
+                  >
+                    {renderEditableCell(item, index, column.id, column.type === 'number', column.align || 'left')}
+                  </td>
+                ))}
                 <td className="border border-gray-300 px-4 py-3 text-center">
                   <button
                     onClick={() => handleRemoveRow(index)}
@@ -478,7 +538,7 @@ export function SubscriptionModelTable() {
             {/* Empty State */}
             {modelData.length === 0 && (
               <tr className="animate-fadeIn">
-                <td colSpan={8} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
+                <td colSpan={columns.length + 2} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
                   <div className="flex flex-col items-center gap-3 animate-bounce">
                     <div className="text-gray-400 transition-transform duration-300 hover:scale-110">
                       <Plus className="h-12 w-12" />
@@ -495,9 +555,10 @@ export function SubscriptionModelTable() {
             {/* Totals Row */}
             {modelData.length > 0 && (
               <tr className="bg-gradient-to-r from-green-100 to-emerald-200 font-bold sticky bottom-0 animate-slideUp shadow-lg">
-                <td className="border border-gray-300 px-4 py-4 sticky left-0 z-10 bg-gradient-to-r from-green-100 to-emerald-200 text-lg font-semibold bg-clip-text text-transparent" colSpan={2}>
+                <td className="border border-gray-300 px-4 py-4 text-center font-medium">
                   Total
                 </td>
+                <td className="border border-gray-300 px-4 py-4 sticky left-0 z-10 bg-gradient-to-r from-green-100 to-emerald-200" colSpan={2}></td>
                 <td className="border border-gray-300 px-4 py-4 text-right transition-all duration-200 hover:bg-green-200">
                   <span className="font-mono text-lg">{totals.subscriptionsAvailed.toLocaleString()}</span>
                 </td>

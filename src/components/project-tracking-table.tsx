@@ -1,11 +1,12 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Save, Trash2, Plus, AlertCircle } from "lucide-react"
+import { Save, Trash2, Plus, AlertCircle, Download } from "lucide-react"
 import { cn } from "../lib/utils"
 import { formatCurrency } from "../lib/format-utils"
 import { useProjectTracking } from "../hooks/use-project-tracking-data"
 import { ProjectTrackingItem } from "../types/project-tracking"
+import * as XLSX from "xlsx"
 
 // Types for better type safety
 interface EditingCell {
@@ -59,6 +60,8 @@ export function ProjectTrackingTable() {
     submitData,
   } = useProjectTracking()
 
+  console.log("Project Tracking Data:", data)
+
   const [tempValue, setTempValue] = useState<string>("")
   const [validationError, setValidationError] = useState<string>("")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -102,7 +105,6 @@ export function ProjectTrackingTable() {
     
     // If it's already in DD/MM/YYYY format, validate and return as-is
     if (typeof value === 'string' && /^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
-      // Validate the date is actually valid
       const [day, month, year] = value.split('/').map(Number);
       const testDate = new Date(year, month - 1, day);
       if (testDate.getDate() === day && testDate.getMonth() === month - 1 && testDate.getFullYear() === year) {
@@ -113,13 +115,11 @@ export function ProjectTrackingTable() {
     let date: Date;
     
     if (typeof value === 'string') {
-      // Check if it's in DD/MM/YYYY format and convert to proper Date
       const ddmmyyyyMatch = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
       if (ddmmyyyyMatch) {
         const [, day, month, year] = ddmmyyyyMatch;
         date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
       } else {
-        // Try parsing as ISO date string or other formats
         date = new Date(value);
       }
     } else {
@@ -134,12 +134,63 @@ export function ProjectTrackingTable() {
     return `${day}/${month}/${year}`;
   }, []);
 
+  // Excel download handler
+  const handleDownloadExcel = useCallback(() => {
+    // Prepare data for Excel, including SL No.
+    const exportData = data.map((item, index) => {
+      const row: Record<string, string | number> = {
+        'SL No.': index + 1,
+      };
+      columns.forEach((column) => {
+        let value = item[column.id as keyof ProjectTrackingItem];
+        if (column.type === 'date') {
+          value = formatDateToDDMMYYYY(value as string);
+        } else if (column.type === 'number' || column.type === 'readonly') {
+          value = Number(value) || 0;
+        } else {
+          value = String(value || '');
+        }
+        row[column.label] = value;
+      });
+      return row;
+    });
+
+    // Add totals row
+    const totalsRow: Record<string, string | number> = {
+      'SL No.': 'Total',
+    };
+    columns.forEach((column) => {
+      if (column.type === 'number' || column.type === 'readonly') {
+        totalsRow[column.label] = totals[column.id as keyof typeof totals] || 0;
+      } else {
+        totalsRow[column.label] = '';
+      }
+    });
+    exportData.push(totalsRow);
+
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // Set column widths
+    const colWidths = [
+      { wch: 10 }, // SL No.
+      ...columns.map(() => ({ wch: 15 })), // Other columns
+    ];
+    worksheet['!cols'] = colWidths;
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Project Tracking');
+
+    // Download file
+    XLSX.writeFile(workbook, 'project-tracking.xlsx');
+  }, [data, columns, totals, formatDateToDDMMYYYY]);
+
   const handleStartEditing = useCallback((itemIndex: number, columnId: string) => {
     const column = columns.find(col => col.id === columnId);
     if (!column || column.type === 'readonly') return;
 
     if (editingCell) {
-      // If already editing another cell, save the current edit first
       handleBlur();
     }
 
@@ -148,7 +199,6 @@ export function ProjectTrackingTable() {
 
     const currentValue = item[columnId as keyof ProjectTrackingItem] || "";
     
-    // For date columns, ensure the value is in DD/MM/YYYY format for editing
     let editValue = String(currentValue);
     if (column.type === 'date' && currentValue) {
       editValue = formatDateToDDMMYYYY(currentValue);
@@ -163,7 +213,6 @@ export function ProjectTrackingTable() {
     const value = e.target.value;
     setTempValue(value);
     
-    // Real-time validation
     if (editingCell) {
       const column = columns.find(col => col.id === editingCell.columnId);
       if (column) {
@@ -199,7 +248,6 @@ export function ProjectTrackingTable() {
 
     let finalValue: string | number = tempValue;
 
-    // Validate and process the value based on column type
     switch (column.type) {
       case 'number':
         if (tempValue === "") {
@@ -217,7 +265,6 @@ export function ProjectTrackingTable() {
           setValidationError("Invalid date format. Use DD/MM/YYYY");
           return;
         }
-        // Keep the date in DD/MM/YYYY format as entered by user
         finalValue = tempValue.trim();
         break;
       
@@ -249,7 +296,6 @@ export function ProjectTrackingTable() {
       setTempValue("");
       setValidationError("");
     } else if (e.key === "Tab") {
-      // Allow tab navigation
       if (!validationError) {
         handleBlur();
       }
@@ -317,7 +363,6 @@ export function ProjectTrackingTable() {
       );
     }
 
-    // Display value logic
     let displayValue: string;
     const rawValue = item[column.id as keyof ProjectTrackingItem];
 
@@ -351,7 +396,6 @@ export function ProjectTrackingTable() {
     );
   }, [editingCell, tempValue, validationError, handleInputChange, handleBlur, handleKeyDown, handleStartEditing, formatDateToDDMMYYYY]);
 
-  // Memoized totals row
   const totalsRow = useMemo(() => {
     if (data.length === 0) return null;
 
@@ -405,6 +449,14 @@ export function ProjectTrackingTable() {
           >
             <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
             Add Project
+          </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
+          >
+            <Download className="h-4 w-4 transition-transform duration-200" />
+            Download Excel
           </button>
         </div>
 
@@ -472,12 +524,9 @@ export function ProjectTrackingTable() {
                 )}
                 style={{ animationDelay: `${itemIndex * 100}ms` }}
               >
-                {/* SL No */}
                 <td className="border border-gray-300 px-4 py-3 text-center font-medium transition-colors duration-200">
                   {itemIndex + 1}
                 </td>
-
-                {/* Dynamic columns */}
                 {columns.map(column => (
                   <td
                     key={column.id}
@@ -490,8 +539,6 @@ export function ProjectTrackingTable() {
                     {renderEditableCell(item, itemIndex, column)}
                   </td>
                 ))}
-
-                {/* Actions */}
                 <td className="border border-gray-300 px-4 py-3 text-center">
                   <button
                     onClick={() => handleRemoveRow(itemIndex)}
@@ -504,8 +551,6 @@ export function ProjectTrackingTable() {
                 </td>
               </tr>
             ))}
-
-            {/* Empty state */}
             {data.length === 0 && (
               <tr className="animate-fadeIn">
                 <td colSpan={columns.length + 2} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
@@ -521,14 +566,11 @@ export function ProjectTrackingTable() {
                 </td>
               </tr>
             )}
-
-            {/* Totals row */}
             {totalsRow}
           </tbody>
         </table>
       </div>
 
-      {/* Custom CSS for animations */}
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; }

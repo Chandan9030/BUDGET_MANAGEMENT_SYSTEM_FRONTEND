@@ -3,12 +3,14 @@ import type { BudgetSection, TableColumn } from "../types/budget"
 
 export const exportToExcel = (data: BudgetSection[], columns: TableColumn[], fileName: string) => {
   // Flatten the data structure for Excel
-  const rows: any[] = []
+
+  console.log(data, columns, fileName);
+  const rows: Record<string, unknown>[] = []
 
   // Add each section with its items
   data.forEach((section) => {
     // Add section header
-    const sectionRow: Record<string, any> = {
+    const sectionRow: Record<string, unknown> = {
       "SR.NO": "",
       "Expense Category": section.name,
       Employee: "",
@@ -16,17 +18,17 @@ export const exportToExcel = (data: BudgetSection[], columns: TableColumn[], fil
 
     // Add values for each column
     columns.forEach((column) => {
-      sectionRow[column.name] = section.items.reduce((sum, item) => sum + (Number(item[column.id]) || 0), 0)
+      sectionRow[column.name] = section?.items?.reduce((sum, item) => sum + (Number(item[column.id]) || 0), 0)
     })
 
     // Add monthly investment column
-    sectionRow["Monthly Investment"] = section.items.reduce((sum, item) => sum + (Number(item.monthlyCost) || 0), 0)
+    sectionRow["Monthly Investment"] = section?.items?.reduce((sum, item) => sum + (Number(item.monthlyCost) || 0), 0)
 
     rows.push(sectionRow)
 
     // Add section items
     section.items.forEach((item, index) => {
-      const itemRow: Record<string, any> = {
+      const itemRow: Record<string, unknown> = {
         "SR.NO": index + 1,
         "Expense Category": item.category,
         Employee: item.employee,
@@ -45,7 +47,7 @@ export const exportToExcel = (data: BudgetSection[], columns: TableColumn[], fil
   })
 
   // Add overall total
-  const totalRow: Record<string, any> = {
+  const totalRow: Record<string, unknown> = {
     "SR.NO": "",
     "Expense Category": "OVERALL TOTAL",
     Employee: "",

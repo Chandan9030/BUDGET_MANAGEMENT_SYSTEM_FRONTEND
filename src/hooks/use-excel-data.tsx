@@ -74,7 +74,7 @@ export function useExcelData() {
           } else {
             setError("No valid data found in the Excel file")
           }
-        } catch (err) {
+        } catch {
           setError("Error reading the Excel file. Please make sure it is a valid Excel file.")
         } finally {
           setIsLoading(false)

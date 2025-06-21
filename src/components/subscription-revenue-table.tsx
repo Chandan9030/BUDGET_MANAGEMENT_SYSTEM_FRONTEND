@@ -1,16 +1,24 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
-import { Save, Trash2, Plus, AlertCircle } from "lucide-react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { Save, Trash2, Plus, AlertCircle, Download } from "lucide-react"
 import { cn } from "../lib/utils"
 import { formatCurrency } from "../lib/format-utils"
 import { useSubscriptionRevenue, SubscriptionRevenueItem } from "../hooks/use-subscription-revenue-data"
+import * as XLSX from "xlsx"
 
 // Types for better type safety
 interface EditingCell {
   rowIndex: number;
   columnId: string;
   originalValue: string | number;
+}
+
+interface ColumnConfig {
+  id: string;
+  label: string;
+  type: 'text' | 'number';
+  align?: 'left' | 'right';
 }
 
 export function SubscriptionRevenueTable() {
@@ -41,6 +49,16 @@ export function SubscriptionRevenueTable() {
   const [removingRows, setRemovingRows] = useState<Set<number>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Column configuration
+  const columns: ColumnConfig[] = useMemo(() => [
+    { id: 'revenueSource', label: 'Revenue Source', type: 'text', align: 'left' },
+    { id: 'subscriptionsAvailed', label: 'Subscriptions Availed', type: 'number', align: 'right' },
+    { id: 'projectedMonthlyRevenue', label: 'Monthly Revenue (INR)', type: 'number', align: 'right' },
+    { id: 'projectedAnnualRevenue', label: 'Annual Revenue (INR)', type: 'number', align: 'right' },
+    { id: 'subscribed', label: 'Subscribed', type: 'number', align: 'right' },
+    { id: 'profit', label: 'Profit', type: 'number', align: 'right' },
+  ], [])
+
   // Focus input when editing starts
   useEffect(() => {
     if (editingCell && inputRef.current) {
@@ -64,6 +82,50 @@ export function SubscriptionRevenueTable() {
     const num = parseFloat(value);
     return !isNaN(num) && num >= 0;
   }, []);
+
+  // Excel download handler
+  const handleDownloadExcel = useCallback(() => {
+    // Prepare data for Excel, including SL No.
+    const exportData = subscriptionData.map((item, index) => {
+      const row: Record<string, string | number> = {
+        'SL No.': index + 1,
+      };
+      columns.forEach((column) => {
+        const value = item[column.id as keyof SubscriptionRevenueItem];
+        row[column.label] = column.type === 'number' ? Number(value) || 0 : String(value || '');
+      });
+      return row;
+    });
+
+    // Add totals row
+    const totalsRow: Record<string, string | number> = {
+      'SL No.': 'Total',
+      'Revenue Source': '',
+      'Subscriptions Availed': totals.subscriptionsAvailed,
+      'Monthly Revenue (INR)': totals.projectedMonthlyRevenue,
+      'Annual Revenue (INR)': totals.projectedAnnualRevenue,
+      'Subscribed': totals.subscribed,
+      'Profit': totals.profit,
+    };
+    exportData.push(totalsRow);
+
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // Set column widths
+    const colWidths = [
+      { wch: 10 }, // SL No.
+      ...columns.map(() => ({ wch: 15 })), // Other columns
+    ];
+    worksheet['!cols'] = colWidths;
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Subscription Revenue');
+
+    // Download file
+    XLSX.writeFile(workbook, 'subscription-revenue.xlsx');
+  }, [subscriptionData, totals, columns]);
 
   const startEditing = useCallback((rowIndex: number, columnId: string) => {
     if (
@@ -193,6 +255,8 @@ export function SubscriptionRevenueTable() {
     }
   }, [removeRow]);
 
+  console.log(subscriptionData, "Subscription Data Loaded");
+
   const renderEditableCell = useCallback(
     (
       item: SubscriptionRevenueItem,
@@ -223,13 +287,9 @@ export function SubscriptionRevenueTable() {
               )}
             />
             {validationError && (
-              <div className="absolute top-full left-0 mt-2 p-0 bg-gray-100 border-t border-blue-400 rounded-lg">
-                <div className="relative animate-in">
-                  <p className="text-red-600 text-sm">
-                    <AlertCircle className="inline h-3 w-3 mr-2" />
-                    {validationError}
-                  </p>
-                </div>
+              <div className="absolute top-full left-0 mt-2 p-2 bg-red-100 border border-red-300 rounded-lg text-xs text-red-600 whitespace-nowrap z-10 shadow-lg animate-slideIn">
+                <AlertCircle className="inline h-3 w-3 mr-1" />
+                {validationError}
               </div>
             )}
           </div>
@@ -291,12 +351,12 @@ export function SubscriptionRevenueTable() {
             onClick={handleSubmit}
             disabled={isSubmitting || submitStatus === "loading"}
             className={cn(
-              "px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-110 active:scale-95 transform",
+              "px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform",
               isSubmitting || submitStatus === "loading"
                 ? "bg-gray-400 text-gray-200 cursor-not-allowed"
                 : flashingSave
                   ? "bg-green-500 text-white shadow-lg animate-pulse"
-                  : "bg-blue-600 text-white hover:bg-blue-700 hover-blue-800 shadow-md hover:shadow-lg"
+                  : "bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
             )}
           >
             <Save className={cn(
@@ -310,7 +370,7 @@ export function SubscriptionRevenueTable() {
             onClick={handleAddRow}
             disabled={isAddingRow}
             className={cn(
-              "px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-110 active:scale-95 transform",
+              "px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform",
               isAddingRow
                 ? "bg-gray-400 text-gray-400 cursor-not-allowed"
                 : "bg-green-600 text-white hover:bg-green-700 shadow-md hover:shadow-lg"
@@ -322,6 +382,14 @@ export function SubscriptionRevenueTable() {
               isAddingRow && "animate-spin"
             )} />
             {isAddingRow ? "Adding..." : "Add Revenue Source"}
+          </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
+          >
+            <Download className="h-4 w-4 transition-transform duration-200" />
+            Download Excel
           </button>
         </div>
 
@@ -353,23 +421,20 @@ export function SubscriptionRevenueTable() {
           <thead className="sticky top-0 bg-gradient-to-r from-yellow-200 to-yellow-300 z-20 shadow-md">
             <tr>
               <th className="border border-gray-300 px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider sticky left-0 z-30 bg-gradient-to-r from-yellow-200 to-yellow-300 transition-colors duration-200 hover:bg-yellow-400">
-                Revenue Source
+                SL No.
               </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Subscriptions Availed
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Monthly Revenue (INR)
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Annual Revenue (INR)
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Subscribed
-              </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Profit
-              </th>
+              {columns.map((column, index) => (
+                <th
+                  key={column.id}
+                  className={cn(
+                    "border border-gray-300 px-4 py-3 text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400",
+                    column.align === 'right' ? 'text-right' : 'text-left'
+                  )}
+                  style={{ animationDelay: `${index * 50}ms` }}
+                >
+                  {column.label}
+                </th>
+              ))}
               <th className="border border-gray-300 px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider w-20 transition-colors duration-200 hover:bg-yellow-400">
                 Actions
               </th>
@@ -393,24 +458,21 @@ export function SubscriptionRevenueTable() {
                 )}
                 style={{ animationDelay: `${index * 100}ms` }}
               >
-                <td className="border border-gray-300 px-4 py-3 sticky left-0 z-10 bg-inherit">
-                  {renderEditableCell(item, index, "revenueSource", false, "left")}
+                <td className="border border-gray-300 px-4 py-3 text-center font-medium">
+                  {index + 1}
                 </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "subscriptionsAvailed", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "projectedMonthlyRevenue", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "projectedAnnualRevenue", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "subscribed", true, "right")}
-                </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "profit", true, "right")}
-                </td>
+                {columns.map(column => (
+                  <td
+                    key={column.id}
+                    className={cn(
+                      "border border-gray-300 px-4 py-3",
+                      column.align === 'right' && 'text-right',
+                      column.align === 'left' && 'sticky left-0 z-10 bg-inherit'
+                    )}
+                  >
+                    {renderEditableCell(item, index, column.id, column.type === 'number', column.align || 'left')}
+                  </td>
+                ))}
                 <td className="border border-gray-300 px-4 py-3 text-center">
                   <button
                     onClick={() => handleRemoveRow(index)}
@@ -432,7 +494,7 @@ export function SubscriptionRevenueTable() {
             {/* Empty State */}
             {subscriptionData.length === 0 && (
               <tr className="animate-fadeIn">
-                <td colSpan={7} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
+                <td colSpan={columns.length + 2} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
                   <div className="flex flex-col items-center gap-3 animate-bounce">
                     <div className="text-gray-400 transition-transform duration-300 hover:scale-110">
                       <Plus className="h-12 w-12" />
@@ -449,9 +511,10 @@ export function SubscriptionRevenueTable() {
             {/* Totals Row */}
             {subscriptionData.length > 0 && (
               <tr className="bg-gradient-to-r from-green-100 to-emerald-200 font-bold sticky bottom-0 animate-slideUp shadow-lg">
-                <td className="border border-gray-300 px-4 py-4 sticky left-0 z-10 bg-gradient-to-r from-green-100 to-emerald-200 text-lg font-semibold bg-clip-text text-transparent">
+                <td className="border border-gray-300 px-4 py-4 text-center font-medium">
                   Total
                 </td>
+                <td className="border border-gray-300 px-4 py-4 sticky left-0 z-10 bg-gradient-to-r from-green-100 to-emerald-200"></td>
                 <td className="border border-gray-300 px-4 py-4 text-right transition-all duration-200 hover:bg-green-200">
                   <span className="font-mono text-lg">{totals.subscriptionsAvailed.toLocaleString()}</span>
                 </td>

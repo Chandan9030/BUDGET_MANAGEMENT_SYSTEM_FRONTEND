@@ -22,14 +22,16 @@ import { Input } from "../components/ui/input"
 import { Label } from "../components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import type { BudgetSection, TableColumn } from "../types/budget"
-import { useProjectTracking } from "../hooks/use-project-tracking-data"
 // import { useSubscriptionModelData } from "../hooks/use-subscription-model-data"
 import { useFinancialSummaryData } from "../hooks/use-financial-summary-data"
-// import { ProjectTrackingVisualization } from "./project-tracking-visualization"
-// import { SubscriptionRevenueVisualization } from "./subscription-revenue-visualization"
+import { ProjectTrackingVisualization } from "./project-tracking-visualization"
+import { SubscriptionRevenueVisualization } from "./subscription-revenue-visualization"
 import { SubscriptionModelVisualization } from "./subscription-model-visualization"
 import { FinancialSummaryVisualization } from "./financial-summary-visualization"
 import { useProject } from "../hooks/use-project-data"
+import { useProjectTracking } from "../hooks/use-project-tracking-data"
+import { useSubscriptionRevenue } from "../hooks/use-subscription-revenue-data"
+import { useSubscriptionModel } from "../hooks/use-subscription-model-data"
 
 interface BudgetViewerProps {
   budgetData: BudgetSection[]
@@ -47,6 +49,7 @@ interface BudgetViewerProps {
 
 export default function BudgetViewer({
   budgetData,
+  
   updateCellValue,
   addRow,
   addColumn,
@@ -95,21 +98,38 @@ export default function BudgetViewer({
 
   // Project tracking data state and functions
   const {
-    data: projectTrackingData,
+   projectTrackingData,
     updateCellValue: updateProjectTrackingCellValue,
     addRow: addProjectTrackingRow,
     removeRow: removeProjectTrackingRow,
     calculateTotals: calculateProjectTrackingTotals,
   } = useProjectTracking()
 
+
   // Subscription revenue data state and functions
-  // const {
-  //   data: subscriptionRevenueData,
-  //   updateCellValue: updateSubscriptionRevenueCellValue,
-  //   addRow: addSubscriptionRevenueRow,
-  //   removeRow: removeSubscriptionRevenueRow,
-  //   calculateTotals: calculateSubscriptionRevenueTotals,
-  // } = useSubscriptionRevenue()
+  interface SubscriptionRevenueItem {
+    revenueSource: string
+    subscriptionsAvailed: number
+    projectedMonthlyRevenue: number
+    projectedAnnualRevenue: number
+    subscribed: string
+    profit: number
+  }
+
+    const {
+      subscriptionData ,
+      
+    } = useSubscriptionRevenue()
+
+  const [subscriptionRevenueData, setSubscriptionRevenueData] = useState<{ items: SubscriptionRevenueItem[] }>({
+    items: [],
+  })
+  const addSubscriptionRevenueRow = (row: SubscriptionRevenueItem) => {
+    setSubscriptionRevenueData((prev) => ({
+      ...prev,
+      items: [...prev.items, row],
+    }))
+  }
 
   // Subscription model data state and functions
   // const {
@@ -172,6 +192,11 @@ export default function BudgetViewer({
     getSubscriptionDate: "",
   })
 
+   const {
+      modelData,
+   
+    } = useSubscriptionModel()
+
   const [newFinancialSummaryData, setNewFinancialSummaryData] = useState({
     category: "",
     amount: 0,
@@ -183,21 +208,23 @@ export default function BudgetViewer({
     // Make sure we're using the function from the hook
     updateFinancialSummaryCellValue(0, "amount", annualTotal)
     updateFinancialSummaryCellValue(1, "amount", monthlyTotal)
-  }, [budgetData]);
+  }, [budgetData])
+
+  console.log(projectData);
 
   const handleExportToExcel = () => {
     if (selectedTable === "table1") {
       exportToExcel(budgetData, columns, "Budget_Data")
     } else if (selectedTable === "table2") {
-      exportToExcel(projectData.items, [], "Project_Data")
+      exportToExcel(projectData as any, [],"Project_Data")
     } else if (selectedTable === "table3") {
-      exportToExcel(projectTrackingData.items, [], "Project_Tracking_Data")
+      exportToExcel(projectTrackingData.items as any, [], "Project_Tracking_Data")
     } else if (selectedTable === "table4") {
-      exportToExcel(subscriptionRevenueData.items, [], "Subscription_Revenue_Data")
+      exportToExcel(subscriptionRevenueData.items as any, [], "Subscription_Revenue_Data")
     } else if (selectedTable === "table5") {
-      exportToExcel(subscriptionModelData.items, [], "Subscription_Model_Data")
+      exportToExcel([], [], "Subscription_Model_Data")
     } else if (selectedTable === "table6") {
-      exportToExcel(financialSummaryData.items, [], "Financial_Summary_Data")
+      exportToExcel(financialSummaryData.items as any, [], "Financial_Summary_Data")
     }
     showNotification("Excel file exported successfully!")
   }
@@ -263,16 +290,16 @@ export default function BudgetViewer({
       showNotification("New project tracking item added successfully!")
     } else if (selectedTable === "table4") {
       addSubscriptionRevenueRow(newSubscriptionRevenueData)
+      addSubscriptionRevenueRow(newSubscriptionRevenueData)
       setNewSubscriptionRevenueData({
         revenueSource: "",
         subscriptionsAvailed: 0,
         projectedMonthlyRevenue: 0,
         projectedAnnualRevenue: 0,
-        subscribed: 0,
+        subscribed: "",
         profit: 0,
       })
       showNotification("New subscription revenue item added successfully!")
-    } else if (selectedTable === "table5") {
       addSubscriptionModelRow(newSubscriptionModelData)
       setNewSubscriptionModelData({
         revenueSource: "",
@@ -335,13 +362,6 @@ export default function BudgetViewer({
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md"
-                    onClick={handleExportToExcel}
-                  >
-                    <Download className="h-4 w-4" />
-                    <span className="hidden sm:inline">Download Excel</span>
-                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Download as Excel file</p>
@@ -386,10 +406,11 @@ export default function BudgetViewer({
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => setSelectedTable("table1")}
-                  className={`flex items-center gap-2 ${selectedTable === "table1"
-                    ? "bg-purple-500 hover:bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table1"
+                      ? "bg-purple-500 hover:bg-purple-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table1" ? (
                     <span className="flex items-center gap-2">
@@ -402,10 +423,11 @@ export default function BudgetViewer({
                 </Button>
                 <Button
                   onClick={() => setSelectedTable("table2")}
-                  className={`flex items-center gap-2 ${selectedTable === "table2"
-                    ? "bg-orange-500 hover:bg-orange-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table2"
+                      ? "bg-orange-500 hover:bg-orange-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table2" ? (
                     <span className="flex items-center gap-2">
@@ -418,10 +440,11 @@ export default function BudgetViewer({
                 </Button>
                 <Button
                   onClick={() => setSelectedTable("table3")}
-                  className={`flex items-center gap-2 ${selectedTable === "table3"
-                    ? "bg-yellow-500 hover:bg-yellow-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table3"
+                      ? "bg-yellow-500 hover:bg-yellow-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table3" ? (
                     <span className="flex items-center gap-2">
@@ -434,10 +457,11 @@ export default function BudgetViewer({
                 </Button>
                 <Button
                   onClick={() => setSelectedTable("table4")}
-                  className={`flex items-center gap-2 ${selectedTable === "table4"
-                    ? "bg-green-500 hover:bg-green-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table4"
+                      ? "bg-green-500 hover:bg-green-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table4" ? (
                     <span className="flex items-center gap-2">
@@ -450,10 +474,11 @@ export default function BudgetViewer({
                 </Button>
                 <Button
                   onClick={() => setSelectedTable("table5")}
-                  className={`flex items-center gap-2 ${selectedTable === "table5"
-                    ? "bg-blue-500 hover:bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table5"
+                      ? "bg-blue-500 hover:bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table5" ? (
                     <span className="flex items-center gap-2">
@@ -466,10 +491,11 @@ export default function BudgetViewer({
                 </Button>
                 <Button
                   onClick={() => setSelectedTable("table6")}
-                  className={`flex items-center gap-2 ${selectedTable === "table6"
-                    ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+                  className={`flex items-center gap-2 ${
+                    selectedTable === "table6"
+                      ? "bg-red-500 hover:bg-red-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                 >
                   {selectedTable === "table6" ? (
                     <span className="flex items-center gap-2">
@@ -729,9 +755,7 @@ export default function BudgetViewer({
                   </p>
                 </div>
 
-                <BudgetTable
-
-                />
+                <BudgetTable />
               </div>
             </>
           )}
@@ -851,9 +875,7 @@ export default function BudgetViewer({
                   </p>
                 </div>
 
-                <ProjectTable
-                
-                />
+                <ProjectTable />
               </div>
             </>
           )}
@@ -992,9 +1014,7 @@ export default function BudgetViewer({
                   </p>
                 </div>
 
-                <ProjectTrackingTable
-
-                />
+                <ProjectTrackingTable />
               </div>
             </>
           )}
@@ -1110,8 +1130,7 @@ export default function BudgetViewer({
                   </p>
                 </div>
 
-                <SubscriptionRevenueTable
-                />
+                <SubscriptionRevenueTable />
               </div>
             </>
           )}
@@ -1226,9 +1245,7 @@ export default function BudgetViewer({
                   </p>
                 </div>
 
-                <SubscriptionModelTable
-             
-                />
+                <SubscriptionModelTable />
               </div>
             </>
           )}
@@ -1310,25 +1327,13 @@ export default function BudgetViewer({
         <TabsContent value="visualization" className="p-4">
           {selectedTable === "table1" && <BudgetVisualization data={budgetData} currentMonth={currentMonth} />}
 
-          {selectedTable === "table2" && <ProjectVisualization data={projectData.items} totals={projectTotals} />}
+          {selectedTable === "table2" && <ProjectVisualization data={projectData} totals={projectTotals} />}
 
-          {selectedTable === "table3" && (
-            <ProjectTrackingTable
-              data={projectTrackingData?.items || []}
-              updateCellValue={updateProjectTrackingCellValue}
-              removeRow={removeProjectTrackingRow}
-              totals={projectTrackingTotals}
-            />
-          )}
+          {selectedTable === "table3" && <ProjectTrackingVisualization data={projectTrackingData} />}
 
-          {selectedTable === "table4" && (
-            <SubscriptionRevenueTable
-            />
-          )}
+          {selectedTable === "table4" && <SubscriptionRevenueVisualization data={subscriptionData} />}
 
-          {selectedTable === "table5" && (
-            <SubscriptionModelVisualization />
-          )}
+          {selectedTable === "table5" && <SubscriptionModelVisualization data={modelData} />}
 
           {selectedTable === "table6" && <FinancialSummaryVisualization data={financialSummaryData.items} />}
         </TabsContent>

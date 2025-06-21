@@ -1,11 +1,12 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { ChevronDown, ChevronUp, Trash2, Save, Plus, AlertCircle } from "lucide-react"
+import { ChevronDown, ChevronUp, Trash2, Save, Plus, AlertCircle, Download } from "lucide-react"
 import { cn } from "../lib/utils"
 import { formatCurrency } from "../lib/format-utils"
 import { useBudget } from "../hooks/use-budget-data"
 import { BudgetSection } from "../types/budget"
+import * as XLSX from "xlsx"
 
 // Types for better type safety
 interface EditingCell {
@@ -13,6 +14,13 @@ interface EditingCell {
   itemIndex: number;
   columnId: string;
   originalValue: string | number;
+}
+
+interface ColumnConfig {
+  id: string;
+  label: string;
+  type: 'text' | 'number';
+  align?: 'left' | 'right' | 'center';
 }
 
 export function BudgetTable() {
@@ -35,6 +43,19 @@ export function BudgetTable() {
   const [validationError, setValidationError] = useState<string>("")
   const [flashingSave, setFlashingSave] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Column configuration for export
+  const exportColumns: ColumnConfig[] = [
+    { id: 'category', label: 'Expense Category', type: 'text', align: 'left' },
+    { id: 'employee', label: 'Employee', type: 'text', align: 'left' },
+    ...columns.map((col) => ({
+      id: col.id,
+      label: col.name,
+      type: 'number' as const,
+      align: 'right' as const,
+    })),
+    { id: 'monthlyCost', label: currentMonth, type: 'number', align: 'right' },
+  ]
 
   // Focus input when editing starts
   useEffect(() => {
@@ -62,188 +83,289 @@ export function BudgetTable() {
 
   // Validation function for numbers
   const validateNumber = useCallback((value: string): boolean => {
-    if (value === "") return true; // Allow empty values
-    const num = parseFloat(value);
-    return !isNaN(num) && num >= 0;
-  }, []);
+    if (value === "") return true // Allow empty values
+    const num = parseFloat(value)
+    return !isNaN(num) && num >= 0
+  }, [])
 
-  const startEditing = useCallback((sectionIndex: number, itemIndex: number, columnId: string) => {
-    if (
-      editingCell?.sectionIndex === sectionIndex &&
-      editingCell?.itemIndex === itemIndex &&
-      editingCell?.columnId === columnId
-    ) {
-      return; // Prevent re-triggering if already editing this cell
+  // Excel download handler
+  const handleDownloadExcel = useCallback(() => {
+    const exportData: Record<string, string | number>[] = []
+    let rowIndex = 1
+
+    // Add data for each section
+    data.forEach((section) => {
+      // Add section header as a row
+      exportData.push({
+        'SL No.': `Section: ${section.name}`,
+        'Expense Category': '',
+        'Employee': '',
+        ...columns.reduce((acc, col) => ({ ...acc, [col.name]: '' }), {}),
+        [currentMonth]: '',
+      })
+
+      // Add items for the section
+      section.items.forEach((item) => {
+        const row: Record<string, string | number> = {
+          'SL No.': rowIndex++,
+          'Expense Category': String(item.category || ''),
+          'Employee': String(item.employee || ''),
+        }
+        columns.forEach((col) => {
+          row[col.name] = Number(item[col.id]) || 0
+        })
+        row[currentMonth] = Number(item.monthlyCost) || 0
+        exportData.push(row)
+      })
+
+      // Add section total
+      const sectionTotal: Record<string, string | number> = {
+        'SL No.': `Total for ${section.name}`,
+        'Expense Category': '',
+        'Employee': '',
+      }
+      columns.forEach((col) => {
+        sectionTotal[col.name] = calculateSectionTotal(section, col.id)
+      })
+      sectionTotal[currentMonth] = calculateSectionTotal(section, 'monthlyCost')
+      exportData.push(sectionTotal)
+    })
+
+    // Add overall total
+    const overallTotal: Record<string, string | number> = {
+      'SL No.': 'Overall Total',
+      'Expense Category': '',
+      'Employee': '',
     }
+    columns.forEach((col) => {
+      overallTotal[col.name] = calculateOverallTotal(col.id)
+    })
+    overallTotal[currentMonth] = calculateOverallTotal('monthlyCost')
+    exportData.push(overallTotal)
 
-    if (editingCell) {
-      handleBlur(); // Save current edit before starting a new one
-    }
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(exportData)
 
-    const item = data[sectionIndex]?.items[itemIndex];
-    if (!item) return;
+    // Set column widths
+    const colWidths = [
+      { wch: 10 }, // SL No.
+      { wch: 20 }, // Expense Category
+      { wch: 15 }, // Employee
+      ...columns.map(() => ({ wch: 15 })), // Other columns
+      { wch: 15 }, // Current Month
+    ]
+    worksheet['!cols'] = colWidths
 
-    const rawValue = item[columnId];
-    const currentValue = (typeof rawValue === "string" || typeof rawValue === "number") ? rawValue : "";
-    setEditingCell({ sectionIndex, itemIndex, columnId, originalValue: currentValue });
-    setTempValue(String(currentValue));
-    setValidationError("");
-  }, [editingCell, data, handleBlur]);
+    // Create workbook
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Budget')
+
+    // Download file
+    XLSX.writeFile(workbook, 'budget.xlsx')
+  }, [data, columns, currentMonth])
 
   const stopEditing = useCallback(() => {
-    setEditingCell(null);
-    setTempValue("");
-    setValidationError("");
-  }, []);
-
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setTempValue(value);
-
-    // Real-time validation for numeric fields
-    if (editingCell) {
-      const isNumeric = ["monthlyCost", "quarterlyCost", "halfYearlyCost", "annualCost"].includes(editingCell.columnId);
-      if (isNumeric && value && !validateNumber(value)) {
-        setValidationError("Please enter a valid positive number");
-      } else {
-        setValidationError("");
-      }
-    }
-  }, [editingCell, validateNumber]);
+    setEditingCell(null)
+    setTempValue("")
+    setValidationError("")
+  }, [])
 
   const handleBlur = useCallback(async () => {
-    if (!editingCell) return;
+    if (!editingCell) return
 
-    const { sectionIndex, itemIndex, columnId, originalValue } = editingCell;
-    let finalValue: string | number = tempValue;
+    const { sectionIndex, itemIndex, columnId, originalValue } = editingCell
+    let finalValue: string | number = tempValue
 
     // Process the value based on column type
     if (["monthlyCost", "quarterlyCost", "halfYearlyCost", "annualCost"].includes(columnId)) {
       if (tempValue === "" || tempValue === "0") {
-        finalValue = 0;
+        finalValue = 0
       } else if (!validateNumber(tempValue)) {
-        setValidationError("Invalid number format");
-        return;
+        setValidationError("Invalid number format")
+        return
       } else {
-        finalValue = Math.round(parseFloat(tempValue) * 100) / 100; // Round to 2 decimal places
+        finalValue = Math.round(parseFloat(tempValue) * 100) / 100 // Round to 2 decimal places
       }
     } else {
-      finalValue = tempValue.trim();
+      finalValue = tempValue.trim()
     }
 
     // Only update if value actually changed
     if (finalValue !== originalValue) {
       try {
-        await updateCellValue(sectionIndex, itemIndex, columnId, finalValue);
+        await updateCellValue(sectionIndex, itemIndex, columnId, finalValue)
       } catch (error) {
-        console.error("Error updating cell value:", error);
-        setValidationError("Failed to update cell value");
+        console.error("Error updating cell value:", error)
+        setValidationError("Failed to update cell value")
       }
     }
 
-    stopEditing();
-  }, [editingCell, tempValue, validateNumber, updateCellValue, stopEditing]);
+    stopEditing()
+  }, [editingCell, tempValue, validateNumber, updateCellValue, stopEditing])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (!validationError) {
-        handleBlur();
+  const startEditing = useCallback(
+    (sectionIndex: number, itemIndex: number, columnId: string) => {
+      if (
+        editingCell?.sectionIndex === sectionIndex &&
+        editingCell?.itemIndex === itemIndex &&
+        editingCell?.columnId === columnId
+      ) {
+        return // Prevent re-triggering if already editing this cell
       }
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      stopEditing();
-    } else if (e.key === "Tab") {
-      if (!validationError) {
-        handleBlur();
+
+      if (editingCell) {
+        handleBlur() // Save current edit before starting a new one
       }
-    }
-  }, [validationError, handleBlur, stopEditing]);
+
+      const item = data[sectionIndex]?.items[itemIndex]
+      if (!item) return
+
+      const rawValue = item[columnId]
+      const currentValue =
+        typeof rawValue === "string" || typeof rawValue === "number" ? rawValue : ""
+      setEditingCell({ sectionIndex, itemIndex, columnId, originalValue: currentValue })
+      setTempValue(String(currentValue))
+      setValidationError("")
+    },
+    [editingCell, data, handleBlur]
+  )
+
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value
+      setTempValue(value)
+
+      // Real-time validation for numeric fields
+      if (editingCell) {
+        const isNumeric = ["monthlyCost", "quarterlyCost", "halfYearlyCost", "annualCost"].includes(
+          editingCell.columnId
+        )
+        if (isNumeric && value && !validateNumber(value)) {
+          setValidationError("Please enter a valid positive number")
+        } else {
+          setValidationError("")
+        }
+      }
+    },
+    [editingCell, validateNumber]
+  )
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault()
+        if (!validationError) {
+          handleBlur()
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault()
+        stopEditing()
+      } else if (e.key === "Tab") {
+        if (!validationError) {
+          handleBlur()
+        }
+      }
+    },
+    [validationError, handleBlur, stopEditing]
+  )
 
   // Calculate section totals for each column
-  const calculateSectionTotal = useCallback((section: BudgetSection, columnId: string) => {
-    return section.items.reduce((total, item) => {
-      return total + (Number(item[columnId]) || 0);
-    }, 0);
-  }, []);
+  const calculateSectionTotal = useCallback(
+    (section: BudgetSection, columnId: string) => {
+      return section.items.reduce((total, item) => {
+        return total + (Number(item[columnId]) || 0)
+      }, 0)
+    },
+    []
+  )
 
   // Calculate overall totals for each column
-  const calculateOverallTotal = useCallback((columnId: string) => {
-    return data.reduce((sum: number, section: BudgetSection) => {
-      return sum + calculateSectionTotal(section, columnId);
-    }, 0);
-  }, [data, calculateSectionTotal]);
+  const calculateOverallTotal = useCallback(
+    (columnId: string) => {
+      return data.reduce((sum: number, section: BudgetSection) => {
+        return sum + calculateSectionTotal(section, columnId)
+      }, 0)
+    },
+    [data, calculateSectionTotal]
+  )
 
   const handleSubmit = useCallback(async () => {
     try {
-      await submitData();
+      await submitData()
     } catch (error) {
-      console.error('Error submitting budget:', error);
+      console.error("Error submitting budget:", error)
     }
-  }, [submitData]);
+  }, [submitData])
 
-  const renderEditableCell = useCallback((
-    item: Record<string, unknown>,
-    sectionIndex: number,
-    itemIndex: number,
-    columnId: string,
-    isNumeric: boolean = false,
-    textAlign: string = "left"
-  ) => {
-    const isEditing = editingCell?.sectionIndex === sectionIndex &&
-                     editingCell?.itemIndex === itemIndex &&
-                     editingCell?.columnId === columnId;
+  const renderEditableCell = useCallback(
+    (
+      item: Record<string, unknown>,
+      sectionIndex: number,
+      itemIndex: number,
+      columnId: string,
+      isNumeric: boolean = false,
+      textAlign: string = "left"
+    ) => {
+      const isEditing =
+        editingCell?.sectionIndex === sectionIndex &&
+        editingCell?.itemIndex === itemIndex &&
+        editingCell?.columnId === columnId
 
-    if (isEditing) {
-      return (
-        <div className="relative animate-fadeIn">
-          <input
-            ref={inputRef}
-            type={isNumeric ? "number" : "text"}
-            min={isNumeric ? "0" : undefined}
-            step={isNumeric ? "0.01" : undefined}
-            value={tempValue}
-            onChange={handleInputChange}
-            onBlur={handleBlur}
-            onKeyDown={handleKeyDown}
-            className={cn(
-              "w-full p-2 border-2 rounded-lg focus:ring-4 focus:ring-indigo-200 focus:border-indigo-500 transition-all duration-200 transform focus:scale-105 shadow-sm",
-              textAlign === "right" && "text-right",
-              validationError ? "border-red-500 focus:ring-red-200 focus:border-red-500 bg-red-50" : "border-indigo-300 bg-white"
+      if (isEditing) {
+        return (
+          <div className="relative animate-slideIn">
+            <input
+              ref={inputRef}
+              type={isNumeric ? "number" : "text"}
+              min={isNumeric ? "0" : undefined}
+              step={isNumeric ? "0.01" : undefined}
+              value={tempValue}
+              onChange={handleInputChange}
+              onBlur={handleBlur}
+              onKeyDown={handleKeyDown}
+              className={cn(
+                "w-full p-2 border-2 rounded-lg focus:ring-4 focus:ring-indigo-200 focus:border-indigo-500 transition-all duration-200 transform focus:scale-105 shadow-sm",
+                textAlign === "right" && "text-right",
+                textAlign === "center" && "text-center",
+                validationError
+                  ? "border-red-500 focus:ring-red-200 focus:border-red-500 bg-red-50"
+                  : "border-indigo-300 bg-white"
+              )}
+            />
+            {validationError && (
+              <div className="absolute top-full left-0 mt-2 p-2 bg-red-100 border border-red-300 rounded-lg text-xs text-red-600 whitespace-nowrap z-10 shadow-lg animate-slideIn">
+                <AlertCircle className="inline h-3 w-3 mr-1" />
+                {validationError}
+              </div>
             )}
-          />
-          {validationError && (
-            <div className="absolute top-full left-0 mt-2 p-2 bg-red-100 border border-red-300 rounded-lg text-xs text-red-600 whitespace-nowrap z-10 shadow-lg animate-slideIn">
-              <AlertCircle className="inline h-3 w-3 mr-1" />
-              {validationError}
-            </div>
-          )}
-        </div>
-      );
-    }
+          </div>
+        )
+      }
 
-    const displayValue = isNumeric
-      ? formatCurrency(Number(item[columnId]) || 0, false)
-      : (typeof item[columnId] === "string" || typeof item[columnId] === "number")
+      const displayValue = isNumeric
+        ? formatCurrency(Number(item[columnId]) || 0, false)
+        : typeof item[columnId] === "string" || typeof item[columnId] === "number"
         ? item[columnId]
-        : "Click to edit";
+        : "Click to edit"
 
-    return (
-      <div
-        className={cn(
-          "min-h-[2rem] p-2 rounded-lg transition-all duration-200 transform hover:scale-105",
-          "cursor-pointer hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 hover:shadow-md",
-          "hover:border-indigo-200 border border-transparent",
-          textAlign === "right" && "text-right",
-          textAlign === "center" && "text-center"
-        )}
-        onClick={() => startEditing(sectionIndex, itemIndex, columnId)}
-        title="Click to edit"
-      >
-        <span className="transition-all duration-200">{displayValue}</span>
-      </div>
-    );
-  }, [editingCell, tempValue, validationError, handleInputChange, handleBlur, handleKeyDown, startEditing]);
+      return (
+        <div
+          className={cn(
+            "min-h-[2rem] p-2 rounded-lg transition-all duration-200 transform hover:scale-105",
+            "cursor-pointer hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 hover:shadow-md",
+            "hover:border-indigo-200 border border-transparent",
+            textAlign === "right" && "text-right",
+            textAlign === "center" && "text-center"
+          )}
+          onClick={() => startEditing(sectionIndex, itemIndex, columnId)}
+          title="Click to edit"
+        >
+          <span className="transition-all duration-200">{displayValue}</span>
+        </div>
+      )
+    },
+    [editingCell, tempValue, validationError, handleInputChange, handleBlur, handleKeyDown, startEditing]
+  )
 
   return (
     <div className="space-y-4 animate-fadeIn">
@@ -262,20 +384,31 @@ export function BudgetTable() {
                 : "bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
             )}
           >
-            <Save className={cn(
-              "h-4 w-4 transition-transform duration-200",
-              submitStatus === "loading" && "animate-spin"
-            )} />
+            <Save
+              className={cn(
+                "h-4 w-4 transition-transform duration-200",
+                submitStatus === "loading" && "animate-spin"
+              )}
+            />
             {submitStatus === "loading" ? "Saving..." : "Save to MongoDB"}
           </button>
 
-          {/* Add Section button (assuming a method exists to add sections) */}
           <button
-            onClick={() => {/* Implement addSection if available */}}
+            onClick={() => {
+              /* Implement addSection if available */
+            }}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
           >
             <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
             Add Section
+          </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
+          >
+            <Download className="h-4 w-4 transition-transform duration-200" />
+            Download Excel
           </button>
         </div>
 
@@ -376,11 +509,15 @@ export function BudgetTable() {
                       className="border border-gray-300 px-4 py-4 text-right font-bold text-gray-900 transition-all duration-200 hover:bg-yellow-200"
                       style={{ animationDelay: `${index * 50}ms` }}
                     >
-                      <span className="font-mono text-lg">{formatCurrency(calculateSectionTotal(section, column.id), false)}</span>
+                      <span className="font-mono text-lg">
+                        {formatCurrency(calculateSectionTotal(section, column.id), false)}
+                      </span>
                     </td>
                   ))}
                   <td className="border border-gray-300 px-4 py-4 text-right font-bold text-gray-900 transition-all duration-200 hover:bg-yellow-200">
-                    <span className="font-mono text-lg">{formatCurrency(calculateSectionTotal(section, "monthlyCost"), false)}</span>
+                    <span className="font-mono text-lg">
+                      {formatCurrency(calculateSectionTotal(section, "monthlyCost"), false)}
+                    </span>
                   </td>
                   <td className="border border-gray-300 px-4 py-4 text-center">
                     <button
@@ -433,7 +570,10 @@ export function BudgetTable() {
                                 {renderEditableCell(item, sectionIndex, itemIndex, "employee", false, "left")}
                               </td>
                               {columns.map((column) => (
-                                <td key={column.id} className="border border-gray-300 px-4 py-3 text-right">
+                                <td
+                                  key={column.id}
+                                  className="border border-gray-300 px-4 py-3 text-right"
+                                >
                                   {renderEditableCell(item, sectionIndex, itemIndex, column.id, true, "right")}
                                 </td>
                               ))}
@@ -465,7 +605,10 @@ export function BudgetTable() {
             {/* Empty state */}
             {data.length === 0 && (
               <tr className="animate-fadeIn">
-                <td colSpan={columns.length + 4} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
+                <td
+                  colSpan={columns.length + 4}
+                  className="border border-gray-300 px-4 py-12 text-center text-gray-500"
+                >
                   <div className="flex flex-col items-center gap-3 animate-bounce">
                     <div className="text-gray-400 transition-transform duration-300 hover:scale-110">
                       <Plus className="h-12 w-12" />
@@ -498,11 +641,15 @@ export function BudgetTable() {
                   className="border border-gray-300 px-4 py-4 text-right transition-all duration-200 hover:bg-green-200"
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
-                  <span className="font-mono text-lg">{formatCurrency(calculateOverallTotal(column.id), false)}</span>
+                  <span className="font-mono text-lg">
+                    {formatCurrency(calculateOverallTotal(column.id), false)}
+                  </span>
                 </td>
               ))}
               <td className="border border-gray-300 px-4 py-4 text-right transition-all duration-200 hover:bg-green-200">
-                <span className="font-mono text-lg">{formatCurrency(calculateOverallTotal("monthlyCost"), false)}</span>
+                <span className="font-mono text-lg">
+                  {formatCurrency(calculateOverallTotal("monthlyCost"), false)}
+                </span>
               </td>
               <td className="border border-gray-300 px-4 py-4"></td>
             </tr>

@@ -2,16 +2,25 @@
 
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { Save, Trash2, Plus, AlertCircle } from "lucide-react"
+import { Save, Trash2, Plus, AlertCircle, Download } from "lucide-react"
 import { cn } from "../lib/utils"
 import type { FinancialSummaryItem } from "../types"
 import { formatCurrency } from "../lib/format-utils"
+import * as XLSX from "xlsx"
 
 // Interface for editing cell state
 interface EditingCell {
   itemIndex: number;
   columnId: string;
   originalValue: string | number;
+}
+
+interface ColumnConfig {
+  id: string;
+  label: string;
+  type: 'text' | 'number';
+  align?: 'left' | 'right';
+  readonly?: boolean | ((item: FinancialSummaryItem) => boolean);
 }
 
 interface FinancialSummaryTableProps {
@@ -37,6 +46,12 @@ export function FinancialSummaryTable({
   const [removingRows, setRemovingRows] = useState<Set<number>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Column configuration
+  const columns: ColumnConfig[] = [
+    { id: 'category', label: 'Category', type: 'text', align: 'left' },
+    { id: 'amount', label: 'Amount (INR)', type: 'number', align: 'right', readonly: (item: FinancialSummaryItem) => ['Total Expenses Annual', 'Total Expenses Month'].includes(item.category) },
+  ]
+
   // Focus input when editing starts
   useEffect(() => {
     if (editingCell && inputRef.current) {
@@ -61,6 +76,39 @@ export function FinancialSummaryTable({
     return !isNaN(num)
   }
 
+  // Excel download handler
+  const handleDownloadExcel = () => {
+    // Prepare data for Excel, including SL No.
+    const exportData = data.map((item, index) => {
+      const row: Record<string, string | number> = {
+        'SL No.': index + 1,
+      };
+      columns.forEach((column) => {
+        const value = item[column.id as keyof FinancialSummaryItem];
+        row[column.label] = column.type === 'number' ? Number(value) || 0 : String(value || '');
+      });
+      return row;
+    });
+
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // Set column widths
+    const colWidths = [
+      { wch: 10 }, // SL No.
+      { wch: 20 }, // Category
+      { wch: 15 }, // Amount (INR)
+    ];
+    worksheet['!cols'] = colWidths;
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Financial Summary');
+
+    // Download file
+    XLSX.writeFile(workbook, 'financial-summary.xlsx');
+  }
+
   const startEditing = (itemIndex: number, columnId: string) => {
     if (
       editingCell?.itemIndex === itemIndex &&
@@ -69,12 +117,15 @@ export function FinancialSummaryTable({
       return // Prevent re-triggering if already editing this cell
     }
 
+    const item = data[itemIndex]
+    const column = columns.find(col => col.id === columnId)
+    if (!item || !column) return
+
+    if (column.readonly && column.readonly(item)) return // Prevent editing readonly fields
+
     if (editingCell) {
       handleBlur() // Save current edit before starting a new one
     }
-
-    const item = data[itemIndex]
-    if (!item) return
 
     const currentValue = item[columnId as keyof FinancialSummaryItem] || ""
     setEditingCell({ itemIndex, columnId, originalValue: currentValue })
@@ -201,7 +252,8 @@ export function FinancialSummaryTable({
     textAlign: string = "left"
   ) => {
     const isEditing = editingCell?.itemIndex === itemIndex && editingCell?.columnId === columnId
-    const isReadonly = ["Total Expenses Annual", "Total Expenses Month"].includes(item.category) && columnId === "amount"
+    const column = columns.find(col => col.id === columnId)
+    const isReadonly = column?.readonly && column.readonly(item)
 
     if (isEditing && !isReadonly) {
       return (
@@ -283,6 +335,14 @@ export function FinancialSummaryTable({
             )} />
             {isSubmitting || submitStatus === "loading" ? "Saving to MongoDB..." : "Save to MongoDB"}
           </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform"
+          >
+            <Download className="h-4 w-4 transition-transform duration-200" />
+            Download Excel
+          </button>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -306,11 +366,21 @@ export function FinancialSummaryTable({
           <thead className="sticky top-0 bg-gradient-to-r from-yellow-200 to-yellow-300 z-20 shadow-md">
             <tr>
               <th className="border border-gray-300 px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider sticky left-0 z-30 bg-gradient-to-r from-yellow-200 to-yellow-300 transition-colors duration-200 hover:bg-yellow-400">
-                Category
+                SL No.
               </th>
-              <th className="border border-gray-300 px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400">
-                Amount (INR)
-              </th>
+              {columns.map((column, index) => (
+                <th
+                  key={column.id}
+                  className={cn(
+                    "border border-gray-300 px-4 py-3 text-xs font-semibold text-gray-700 uppercase tracking-wider transition-colors duration-200 hover:bg-yellow-400",
+                    column.align === 'right' ? 'text-right' : 'text-left',
+                    column.id === 'category' && 'sticky left-10 z-30 bg-gradient-to-r from-yellow-200 to-yellow-300'
+                  )}
+                  style={{ animationDelay: `${index * 50}ms` }}
+                >
+                  {column.label}
+                </th>
+              ))}
               <th className="border border-gray-300 px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider w-20 transition-colors duration-200 hover:bg-yellow-400">
                 Actions
               </th>
@@ -335,12 +405,21 @@ export function FinancialSummaryTable({
                 )}
                 style={{ animationDelay: `${index * 50}ms` }}
               >
-                <td className="border border-gray-300 px-4 py-3 sticky left-0 z-10 bg-inherit">
-                  {renderEditableCell(item, index, "category", false, "left")}
+                <td className="border border-gray-300 px-4 py-3 text-center font-medium">
+                  {index + 1}
                 </td>
-                <td className="border border-gray-300 px-4 py-3 text-right">
-                  {renderEditableCell(item, index, "amount", true, "right")}
-                </td>
+                {columns.map(column => (
+                  <td
+                    key={column.id}
+                    className={cn(
+                      "border border-gray-300 px-4 py-3",
+                      column.align === 'right' && 'text-right',
+                      column.id === 'category' && 'sticky left-10 z-10 bg-inherit'
+                    )}
+                  >
+                    {renderEditableCell(item, index, column.id, column.type === 'number', column.align || 'left')}
+                  </td>
+                ))}
                 <td className="border border-gray-300 px-4 py-3 text-center">
                   <button
                     onClick={() => handleRemoveRow(index)}
@@ -362,7 +441,7 @@ export function FinancialSummaryTable({
             {/* Empty State */}
             {data.length === 0 && (
               <tr className="animate-fadeIn">
-                <td colSpan={3} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
+                <td colSpan={columns.length + 2} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
                   <div className="flex flex-col items-center gap-3 animate-bounce">
                     <div className="text-gray-400 transition-transform duration-300 hover:scale-110">
                       <Plus className="h-12 w-12" />

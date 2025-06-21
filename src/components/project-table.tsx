@@ -6,6 +6,7 @@ import { cn } from "../lib/utils"
 import { formatCurrency } from "../lib/format-utils"
 import { useProject } from "../hooks/use-project-data"
 import { ProjectItem } from "../types/project"
+import * as XLSX from "xlsx" // Added import for xlsx library
 
 // Types for better type safety
 interface EditingCell {
@@ -197,6 +198,54 @@ export function ProjectTable() {
     }
   }, [removeRow]);
 
+  // Excel download function
+  const handleDownloadExcel = useCallback(() => {
+    // Prepare data for Excel
+    const excelData = data.map((item, index) => ({
+      "SR.NO": index + 1,
+      "Project Name": item.name,
+      "Status": item.status || "N/A",
+      "Dev Cost": Number(item.dev) || 0,
+      "Extra Cost": Number(item.extra) || 0,
+      "Investment": Number(item.invest) || 0,
+      "Revenue": Number(item.gettingAmount) || 0,
+      "Yet to be Recovered": Number(item.yetToBeRecovered) || 0,
+    }));
+
+    // Add totals row
+    excelData.push({
+      "SR.NO": "",
+      "Project Name": "Total",
+      "Status": "",
+      "Dev Cost": totals.dev,
+      "Extra Cost": totals.extra,
+      "Investment": totals.invest,
+      "Revenue": totals.gettingAmount,
+      "Yet to be Recovered": totals.yetToBeRecovered,
+    });
+
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Projects");
+
+    // Set column widths (optional)
+    const colWidths = [
+      { wch: 10 }, // SR.NO
+      { wch: 30 }, // Project Name
+      { wch: 15 }, // Status
+      { wch: 15 }, // Dev Cost
+      { wch: 15 }, // Extra Cost
+      { wch: 15 }, // Investment
+      { wch: 15 }, // Revenue
+      { wch: 20 }, // Yet to be Recovered
+    ];
+    worksheet["!cols"] = colWidths;
+
+    // Download the Excel file
+    XLSX.writeFile(workbook, "Projects.xlsx");
+  }, [data, totals]);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "Completed": return "bg-green-100 text-green-800 border-green-200";
@@ -373,6 +422,20 @@ export function ProjectTable() {
               isAddingRow && "animate-spin"
             )} />
             {isAddingRow ? "Adding..." : "Add Project"}
+          </button>
+
+          {/* Download Excel Button */}
+          <button
+            onClick={handleDownloadExcel}
+            className={cn(
+              "px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-lg hover:scale-105 active:scale-95 transform",
+              "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md hover:shadow-lg"
+            )}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Download Excel
           </button>
         </div>
 
